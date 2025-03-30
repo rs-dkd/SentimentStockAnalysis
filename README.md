@@ -140,5 +140,5 @@ pip install -r requirements.txt
 
 ```bash
 cd notebooks
-streamlit run StockSentimentAnalysis.py
+streamlit run SentimentStockAnalysis.py
 ```

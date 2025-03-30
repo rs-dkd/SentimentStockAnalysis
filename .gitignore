@@ -1,1 +1,9 @@
 /.ipynb_checkpoints
+.ipynb_checkpoints
+/notebooks/.ipynb_checkpoints
+venv/
+ENV/
+env/
+.env
+.venv
+*.log

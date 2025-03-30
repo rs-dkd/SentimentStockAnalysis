@@ -10,6 +10,7 @@
 7. [Baseline Techniques](#baseline-techniques)
 8. [Novelty/Innovation/Impact](#noveltyinnovationimpact)
 9. [Code Structure](#code-structure)
+10. [How to Run](#how-to-run)
 
 ---
 
@@ -115,10 +116,29 @@ project-root/
 │ ├── stock_tweets.csv
 │ └── additional_data.csv
 │
-├── notebooks/ # Jupyter notebooks for EDA, modeling, and visualization
+├── notebooks/ # Jupyter notebooks and corresponding python files (Streamlit) for EDA, modeling, and visualization
 │ └── SentimentStockAnalysis.ipynb
 │
 ├── .gitignore # Specifies files and folders to exclude from version control
 │
+|
+├── requirements.txt # Project dependencies
+|
+|
 └── README.md # Project documentation (this file)
+```
+
+## How to Run
+
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+## Running the Application
+
+```bash
+cd notebooks
+streamlit run StockSentimentAnalysis.py
 ```

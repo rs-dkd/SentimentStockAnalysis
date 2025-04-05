@@ -8,7 +8,12 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-import os
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.pipeline import make_pipeline
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+import os, re
 
 st.set_page_config(page_title="Stock Price Visualization")
 
@@ -81,3 +86,44 @@ if 'Tweet' in df_VADER.columns:
     ax.set_title("Tweet Sentiment by Stock")
     st.pyplot(fig)
 
+#Naive Bayes Train Model Section
+def clean_tweet(text):
+    text = re.sub(r"http\S+", "", text)
+    text = re.sub(r"@\w+", "", text)
+    text = re.sub(r"[^A-Za-z0-9\s]", "", text)
+    return text.lower().strip()
+
+df_VADER['Clean Tweet'] = df_VADER['Tweet'].apply(clean_tweet)
+X = df_VADER['Clean Tweet']
+y = df_VADER['Sentiment Label']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+model = make_pipeline(CountVectorizer(ngram_range=(1,2)), MultinomialNB())
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
+report = classification_report(y_test, y_pred, output_dict=True)
+report_df = pd.DataFrame(report).transpose().round(2)
+st.subheader("Naive Bayes Model Evaluation Report")
+st.dataframe(report_df, use_container_width=True)
+
+# Test Section, the Naive Bayes needs improvement.
+st.subheader("Test Custom Sentiment")
+user_input = st.text_area("Enter a tweet or comment (Ctrl + Enter to submit):")
+
+if user_input:
+    cleaned_input = clean_tweet(user_input)
+    prediction = model.predict([cleaned_input])[0]
+    vader_score = analyzer.polarity_scores(user_input)['compound']
+
+    if vader_score > 0.05:
+        vader_sentiment = "Positive"
+    elif vader_score < -0.05:
+        vader_sentiment = "Negative"
+    else:
+        vader_sentiment = "Neutral"
+
+    st.markdown("### Results")
+    st.write(f"**Naive Bayes Sentiment:** {prediction}")
+    st.write(f"**VADER Sentiment:** {vader_sentiment}")
+    st.write(f"**VADER Sentiment Score:** {vader_score:.3f}")

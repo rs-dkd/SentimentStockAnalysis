@@ -7,10 +7,13 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.pipeline import make_pipeline
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 import os, re
@@ -127,3 +130,309 @@ if user_input:
     st.write(f"**Naive Bayes Sentiment:** {prediction}")
     st.write(f"**VADER Sentiment:** {vader_sentiment}")
     st.write(f"**VADER Sentiment Score:** {vader_score:.3f}")
+
+#Sentiment and Price Relation, could be better visualized
+st.header("Relationship Between Sentiment and Price Movement")
+
+stock_options = df["Stock Name"].unique()
+selected_stock_temporal = st.selectbox("Select a stock for relationship analysis", stock_options)
+stock_df = df[df["Stock Name"] == selected_stock_temporal].copy()
+stock_tweets = df_VADER[df_VADER["Stock Name"] == selected_stock_temporal].copy()
+stock_tweets['Date_Only'] = stock_tweets['Date'].dt.date
+daily_sentiment = stock_tweets.groupby('Date_Only')['Sentiment'].agg(['mean', 'count']).reset_index()
+daily_sentiment.columns = ['Date', 'Avg_Sentiment', 'Tweet_Count']
+merged_df = pd.merge(stock_df, daily_sentiment, on='Date', how='left')
+merged_df = merged_df.fillna({'Avg_Sentiment': 0, 'Tweet_Count': 0})
+merged_df['Daily_Return'] = merged_df['Close'].pct_change() * 100
+fig, ax1 = plt.subplots(figsize=(12, 6))
+
+color = 'tab:blue'
+ax1.set_xlabel('Date')
+ax1.set_ylabel('Close Price ($)', color=color)
+ax1.plot(merged_df['Date'], merged_df['Close'], color=color)
+ax1.tick_params(axis='y', labelcolor=color)
+
+ax2 = ax1.twinx()
+color = 'tab:red'
+ax2.set_ylabel('Average Sentiment', color=color)
+ax2.plot(merged_df['Date'], merged_df['Avg_Sentiment'], color=color, linestyle='--')
+ax2.tick_params(axis='y', labelcolor=color)
+
+plt.title(f'Stock Price and Twitter Sentiment for {selected_stock_temporal}')
+fig.tight_layout()
+st.pyplot(fig)
+
+#Pattern Mining Section, up down ratio could be better represented
+st.header("Tweet Pattern Mining")
+
+def extract_patterns(tweets_df, price_df, threshold=1.0):
+    tweets_df = tweets_df.copy()
+    price_df = price_df.copy()
+    if 'Daily_Return' not in price_df.columns:
+        price_df['Daily_Return'] = price_df['Close'].pct_change() * 100
+    
+    tweets_df['Date_Only'] = pd.to_datetime(tweets_df['Date']).dt.date
+    
+    try:
+        joined_df = tweets_df.merge(price_df[['Date', 'Daily_Return']], 
+                                  left_on='Date_Only', 
+                                  right_on='Date', 
+                                  how='inner')
+    except KeyError:
+        st.error("Missing columns")
+        return None, None
+    
+    if 'Clean Tweet' not in joined_df.columns:
+        if 'Tweet' in joined_df.columns:
+            joined_df['Clean Tweet'] = joined_df['Tweet'].apply(clean_tweet)
+        else:
+            st.error("Tweet content missing")
+            return None, None
+    
+    significant_up = joined_df[joined_df['Daily_Return'] > threshold]
+    significant_down = joined_df[joined_df['Daily_Return'] < -threshold]
+    
+    if len(significant_up) < 5 or len(significant_down) < 5:
+        st.warning(f"Not enough data with movements above {threshold}% threshold")
+        return None, None
+    
+    up_tweets = " ".join(significant_up['Clean Tweet'].dropna().astype(str))
+    down_tweets = " ".join(significant_down['Clean Tweet'].dropna().astype(str))
+    
+    try:
+        vectorizer = CountVectorizer(stop_words='english', min_df=2, max_features=100)
+        if len(up_tweets) > 10 and len(down_tweets) > 10:
+            up_down_matrix = vectorizer.fit_transform([up_tweets, down_tweets])
+            terms = vectorizer.get_feature_names_out()
+            
+            up_freq = up_down_matrix[0].toarray()[0]
+            down_freq = up_down_matrix[1].toarray()[0]
+            
+            terms_df = pd.DataFrame({
+                'Term': terms,
+                'Upward_Movement_Freq': up_freq,
+                'Downward_Movement_Freq': down_freq
+            })
+            
+            terms_df['Up_Down_Ratio'] = (terms_df['Upward_Movement_Freq'] + 0.1) / (terms_df['Downward_Movement_Freq'] + 0.1)
+            
+            upward_indicators = terms_df.sort_values('Up_Down_Ratio', ascending=False).head(10)
+            
+            downward_indicators = terms_df.sort_values('Up_Down_Ratio').head(10)
+            
+            return upward_indicators, downward_indicators
+        else:
+            st.warning("Not enough tweet content")
+            return None, None
+    except Exception as e:
+        st.error(f"Error in extraction: {e}")
+        return None, None
+
+upward_indicators, downward_indicators = extract_patterns(
+    stock_tweets, 
+    stock_df,
+    threshold=1.0
+)
+
+if upward_indicators is not None and downward_indicators is not None:
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Terms Associated with Upward Price Movement")
+        st.dataframe(upward_indicators[['Term', 'Up_Down_Ratio']])
+    
+    with col2:
+        st.subheader("Terms Associated with Downward Price Movement")
+        st.dataframe(downward_indicators[['Term', 'Up_Down_Ratio']])
+else:
+    st.info("Could not extract patterns for this stock")
+
+#Trading Strategy, needs some issues fixed for different thresholds/holding periods
+st.header("Sentiment-Based Trading Strategy")
+
+sentiment_threshold = st.slider("Sentiment Threshold", -1.0, 1.0, 0.2, 0.05)
+holding_period = st.slider("Holding Period (Days)", 1, 10, 3)
+
+def backtest_sentiment_strategy(merged_df, sentiment_threshold, holding_period):
+    backtest_df = merged_df.copy()
+    backtest_df = backtest_df.dropna(subset=['Avg_Sentiment', 'Close'])
+    
+    if len(backtest_df) < holding_period + 2:
+        return None
+    
+    backtest_df['Position'] = 0
+    backtest_df['Portfolio_Value'] = 0.0
+    initial_investment = 10000
+    current_cash = initial_investment
+    current_shares = 0
+    hold_counter = 0
+
+    for i in range(len(backtest_df)):
+        row = backtest_df.iloc[i]
+        if hold_counter > 0:
+            hold_counter -= 1
+            if hold_counter == 0 and current_shares > 0:
+                current_cash = current_shares * row['Close']
+                current_shares = 0
+                backtest_df.loc[backtest_df.index[i], 'Position'] = -1
+        
+        elif row['Avg_Sentiment'] > sentiment_threshold and current_shares == 0:
+            shares_to_buy = current_cash / row['Close']
+            current_shares = shares_to_buy
+            current_cash = 0
+            backtest_df.loc[backtest_df.index[i], 'Position'] = 1
+            hold_counter = holding_period
+        
+        portfolio_value = current_cash + (current_shares * row['Close'])
+        backtest_df.loc[backtest_df.index[i], 'Portfolio_Value'] = portfolio_value
+    
+    if current_shares > 0 and len(backtest_df) > 0:
+        final_price = backtest_df.iloc[-1]['Close']
+        current_cash = current_shares * final_price
+        current_shares = 0
+        backtest_df.loc[backtest_df.index[-1], 'Portfolio_Value'] = current_cash
+    
+    return backtest_df
+
+backtest_results = backtest_sentiment_strategy(merged_df, sentiment_threshold, holding_period)
+
+if backtest_results is not None and len(backtest_results) > 0:
+    initial_investment = 10000
+    initial_shares = initial_investment / backtest_results.iloc[0]['Close']
+    buy_hold_values = backtest_results['Close'] * initial_shares
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(backtest_results['Date'], backtest_results['Portfolio_Value'], 
+           label='Sentiment Strategy', color='blue')
+    ax.plot(backtest_results['Date'], buy_hold_values, 
+           label='Buy and Hold', color='gray', linestyle='--')
+    buys = backtest_results[backtest_results['Position'] == 1]
+    sells = backtest_results[backtest_results['Position'] == -1]
+    
+    if len(buys) > 0:
+        ax.scatter(buys['Date'], buys['Portfolio_Value'], 
+                 color='green', marker='^', s=100, label='Buy')
+    
+    if len(sells) > 0:
+        ax.scatter(sells['Date'], sells['Portfolio_Value'], 
+                 color='red', marker='v', s=100, label='Sell')
+    
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Portfolio Value ($)')
+    ax.set_title(f'Sentiment-Based Trading Strategy for {selected_stock_temporal}')
+    ax.legend()
+    ax.grid(alpha=0.3)
+    
+    st.pyplot(fig)
+    
+    final_portfolio = backtest_results['Portfolio_Value'].iloc[-1]
+    buy_hold_final = buy_hold_values.iloc[-1]
+    
+    total_return = ((final_portfolio - initial_investment) / initial_investment) * 100
+    buy_hold_return = ((buy_hold_final - initial_investment) / initial_investment) * 100
+    
+    st.subheader("Strategy Performance")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Initial Investment", f"${initial_investment:,.2f}")
+    
+    with col2:
+        st.metric("Final Portfolio Value", f"${final_portfolio:,.2f}", 
+                f"{total_return:.2f}%")
+    
+    with col3:
+        st.metric("Buy & Hold Return", f"{buy_hold_return:.2f}%", 
+                f"{total_return - buy_hold_return:.2f}%")
+    num_buys = len(buys)
+    num_sells = len(sells)
+    
+    st.write(f"Number of trades: {num_buys} buys, {num_sells} sells")
+else:
+    st.warning("Not enough data for backtesting")
+
+#Stock Comparison, can add any other visualizations here
+st.header("Stock Performance Comparison")
+
+stocks_to_compare = st.multiselect("Select stocks to compare", 
+                                 df["Stock Name"].unique(), 
+                                 default=list(df["Stock Name"].unique())[:min(3, len(df["Stock Name"].unique()))])
+
+if stocks_to_compare:
+    comparison_df = df[df["Stock Name"].isin(stocks_to_compare)].copy()
+    stock_metrics = []
+    
+    for stock in stocks_to_compare:
+        stock_data = comparison_df[comparison_df["Stock Name"] == stock].copy()
+        
+        if len(stock_data) < 5:
+            continue
+        
+        initial_price = stock_data["Close"].iloc[0]
+        final_price = stock_data["Close"].iloc[-1]
+        price_change = ((final_price - initial_price) / initial_price) * 100
+        stock_data["Daily_Return"] = stock_data["Close"].pct_change()
+        volatility = stock_data["Daily_Return"].std() * 100
+        stock_tweets = df_VADER[df_VADER["Stock Name"] == stock]
+        avg_sentiment = stock_tweets["Sentiment"].mean() if len(stock_tweets) > 0 else None
+        sentiment_count = len(stock_tweets)
+        
+        stock_metrics.append({
+            "Stock": stock,
+            "Initial Price": initial_price,
+            "Final Price": final_price,
+            "Price Change (%)": price_change,
+            "Volatility (%)": volatility,
+            "Avg Tweet Sentiment": avg_sentiment if avg_sentiment is not None else 0,
+            "Tweet Count": sentiment_count
+        })
+    metrics_df = pd.DataFrame(stock_metrics)
+    st.subheader("Stock Performance Metrics")
+    st.dataframe(metrics_df.set_index("Stock"))
+    st.subheader("Performance Comparison")
+    
+    if len(metrics_df) > 1:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        scatter = ax.scatter(
+            metrics_df["Volatility (%)"], 
+            metrics_df["Price Change (%)"],
+            s=metrics_df["Tweet Count"] / 5 if metrics_df["Tweet Count"].max() > 0 else 100,
+            c=metrics_df["Avg Tweet Sentiment"],
+            cmap="coolwarm",
+            alpha=0.7,
+            vmin=-0.5, vmax=0.5
+        )
+        
+        for i, stock in enumerate(metrics_df["Stock"]):
+            ax.annotate(stock, 
+                       (metrics_df["Volatility (%)"].iloc[i], metrics_df["Price Change (%)"].iloc[i]),
+                       xytext=(5, 5), textcoords="offset points")
+        
+        ax.set_xlabel("Risk (Volatility %)")
+        ax.set_ylabel("Return (Price Change %)")
+        ax.set_title("Risk vs Return Comparison")
+        ax.grid(alpha=0.3)
+        
+        plt.colorbar(scatter, label="Average Tweet Sentiment")
+        st.pyplot(fig)
+        st.subheader("Price Trends Comparison")
+        
+        price_trends = pd.DataFrame()
+        
+        for stock in stocks_to_compare:
+            stock_data = comparison_df[comparison_df["Stock Name"] == stock].copy()
+            if len(stock_data) > 0:
+                stock_data = stock_data.sort_values('Date')
+                stock_data['Normalized_Price'] = stock_data['Close'] / stock_data['Close'].iloc[0] * 100
+                price_trends[stock] = stock_data.set_index('Date')['Normalized_Price']
+        
+        if not price_trends.empty:
+            fig, ax = plt.subplots(figsize=(12, 6))
+            price_trends.plot(ax=ax)
+            ax.set_xlabel('Date')
+            ax.set_ylabel('Normalized Price (Starting at 100)')
+            ax.set_title('Normalized Price Comparison')
+            ax.grid(alpha=0.3)
+            ax.legend(title='Stock')
+            st.pyplot(fig)

@@ -140,3 +140,6 @@ webcolors==24.11.1
 webencodings==0.5.1
 websocket-client==1.8.0
 wheel==0.44.0
+vaderSentiment==3.3.2
+scikit-learn==1.6.1
+seaborn==0.13.2

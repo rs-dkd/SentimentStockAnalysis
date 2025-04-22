@@ -16,6 +16,10 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
+from sklearn.feature_extraction.text import TfidfVectorizer
 import os, re
 
 st.set_page_config(page_title="Stock Price Visualization")
@@ -99,15 +103,59 @@ def clean_tweet(text):
 df_VADER['Clean Tweet'] = df_VADER['Tweet'].apply(clean_tweet)
 X = df_VADER['Clean Tweet']
 y = df_VADER['Sentiment Label']
-
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-model = make_pipeline(CountVectorizer(ngram_range=(1,2)), MultinomialNB())
-model.fit(X_train, y_train)
 
-y_pred = model.predict(X_test)
+
+# Parameter grid for tuning
+param_grid = {
+    'tfidfvectorizer__ngram_range': [(1, 1), (1, 2), (2, 2)],
+    'tfidfvectorizer__max_df': [0.8, 0.9],
+    'multinomialnb__alpha': [0.1, 0.5, 1.0]
+}
+
+model = make_pipeline(TfidfVectorizer(ngram_range=(1, 2)), MultinomialNB())
+
+# GridSearchCV
+grid_search = GridSearchCV(model, param_grid, cv=5, n_jobs=-1)
+
+with st.spinner("Optimizing Naive Bayes model with GridSearchCV..."):
+    grid_search.fit(X_train, y_train)
+
+# Best parameters and score
+st.write(f"Best parameters: {grid_search.best_params_}")
+st.write(f"Best score: {grid_search.best_score_}")
+
+grid_results_df = pd.DataFrame(grid_search.cv_results_)
+grid_results_df = grid_results_df[['params', 'mean_test_score', 'std_test_score']].sort_values(by='mean_test_score', ascending=False)
+
+# Show the results
+st.subheader("GridSearchCV Results")
+st.dataframe(grid_results_df, use_container_width=True)
+
+grid_results_df['alpha_max_df'] = grid_results_df['params'].apply(
+    lambda x: f"alpha={x['multinomialnb__alpha']}, max_df={x['tfidfvectorizer__max_df']}"
+)
+fig, ax = plt.subplots(figsize=(10, 6))
+sns.lineplot(data=grid_results_df, x='alpha_max_df', y='mean_test_score', marker='o')
+
+ax.set_title('GridSearchCV: Hyperparameter vs Mean Test Score')
+ax.set_xlabel('Hyperparameter Combinations')
+ax.set_ylabel('Mean Test Score')
+ax.set_xticklabels(grid_results_df['alpha_max_df'], rotation=90, fontsize=8)
+st.pyplot(fig)
+
+# Generate classification report after fitting the best model
+best_model = grid_search.best_estimator_
+
+# Make predictions using the best model
+y_pred = best_model.predict(X_test)
+
+# Generate the classification report
 report = classification_report(y_test, y_pred, output_dict=True)
 report_df = pd.DataFrame(report).transpose().round(2)
-st.subheader("Naive Bayes Model Evaluation Report")
+
+# Display the model evaluation report
+st.subheader("Optimized Naive Bayes Model Evaluation Report")
 st.dataframe(report_df, use_container_width=True)
 
 # Test Section, the Naive Bayes needs improvement.

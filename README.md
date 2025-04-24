@@ -117,7 +117,9 @@ project-root/
 │ └── additional_data.csv
 │
 ├── notebooks/ # Jupyter notebooks and corresponding python files (Streamlit) for EDA, modeling, and visualization
-│ └── SentimentStockAnalysis.ipynb
+│ ├── SnetimentStockAnalysis.py (where main code is located)
+| └── SentimentStockAnalysis.ipynb
+|
 │
 ├── .gitignore # Specifies files and folders to exclude from version control
 │

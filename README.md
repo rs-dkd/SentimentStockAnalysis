@@ -117,7 +117,7 @@ project-root/
 │ └── additional_data.csv
 │
 ├── notebooks/ # Jupyter notebooks and corresponding python files (Streamlit) for EDA, modeling, and visualization
-│ ├── SnetimentStockAnalysis.py (where main code is located)
+│ ├── SentimentStockAnalysis.py (where main code is located)
 | └── SentimentStockAnalysis.ipynb
 |
 │

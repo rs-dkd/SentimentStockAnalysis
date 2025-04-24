@@ -118,6 +118,7 @@ project-root/
 │
 ├── notebooks/ # Jupyter notebooks and corresponding python files (Streamlit) for EDA, modeling, and visualization
 │ ├── SentimentStockAnalysis.py (where main code is located)
+| ├── Stock price parsing and graph.ipynb
 | └── SentimentStockAnalysis.ipynb
 |
 │
